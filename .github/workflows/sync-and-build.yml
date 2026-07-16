@@ -1,0 +1,116 @@
+name: Sync upstream & build patched APK
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * *'   # daily at 6am UTC
+  workflow_dispatch:       # manual trigger
+
+env:
+  UPSTREAM_REPO: shrimqy/Sefirah-Android
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_build: ${{ steps.check.outputs.needs_build }}
+      upstream_tag: ${{ steps.check.outputs.upstream_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check for new upstream release
+        id: check
+        run: |
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
+          git fetch upstream --tags 2>&1
+
+          # Latest upstream tag (sorted by version)
+          LATEST_UPSTREAM=$(git tag -l | grep -v -- '-patched$' | sort -V | tail -1)
+          echo "Latest upstream tag: $LATEST_UPSTREAM"
+
+          # Already patched?
+          if git tag -l | grep -qF "${LATEST_UPSTREAM}-patched"; then
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            echo "Already built ${LATEST_UPSTREAM}, skipping"
+          else
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "upstream_tag=${LATEST_UPSTREAM}" >> "$GITHUB_OUTPUT"
+            echo "New upstream: ${LATEST_UPSTREAM}, will build"
+          fi
+
+  build:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.needs_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: [17]
+    steps:
+      - name: Checkout upstream tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.check-upstream.outputs.upstream_tag }}
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: microsoft
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Apply our patches
+        run: |
+          # Patch: Add TOGGLEABLE_TILE meta-data to ClipboardTileService
+          sed -i '/<intent-filter>/,/<\/intent-filter>/{
+            /<\/intent-filter>/a\
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE"\
+                android:value="true" />
+          }' app/src/main/AndroidManifest.xml
+          
+          # Verify the patch was applied
+          grep -n "TOGGLEABLE_TILE" app/src/main/AndroidManifest.xml
+          echo "--- Patch applied successfully ---"
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Sign APK
+        uses: ilharp/sign-android-release@v1
+        with:
+          releaseDir: app/build/outputs/apk/debug
+          signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
+          keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        continue-on-error: true   # optional — creates unsigned APK if no keys
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-upstream.outputs.upstream_tag }}-patched
+          name: Sefirah ${{ needs.check-upstream.outputs.upstream_tag }} (patched)
+          body: |
+            ## Sefirah Android — Patched Build
+
+            **Based on:** [${{ env.UPSTREAM_REPO }}@${{ needs.check-upstream.outputs.upstream_tag }}](https://github.com/${{ env.UPSTREAM_REPO }}/releases/tag/${{ needs.check-upstream.outputs.upstream_tag }})
+
+            **Patches applied:**
+            - Added `TOGGLEABLE_TILE` meta-data to `ClipboardTileService` — makes the clipboard quick-settings tile visible and addable in the quick settings editor
+
+            **Installation:**
+            Download the APK below and install it on your Android device.
+
+            > ⚠️ This is a debug build signed with a different key than the Play Store version.
+            > Uninstall the official version first, or use `adb install -r app-debug.apk`.
+          files: app/build/outputs/apk/debug/*.apk
