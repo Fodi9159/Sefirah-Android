@@ -46,9 +46,6 @@ jobs:
     needs: check-upstream
     if: needs.check-upstream.outputs.needs_build == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        java: [17]
     steps:
       - name: Checkout upstream tag
         uses: actions/checkout@v4
@@ -57,10 +54,10 @@ jobs:
           ref: ${{ needs.check-upstream.outputs.upstream_tag }}
           fetch-depth: 0
 
-      - name: Set up JDK ${{ matrix.java }}
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: ${{ matrix.java }}
+          java-version: '17'
           distribution: microsoft
 
       - name: Setup Android SDK
@@ -68,6 +65,9 @@ jobs:
 
       - name: Create local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
       - name: Apply our patches
         run: |
@@ -85,16 +85,6 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug
 
-      - name: Sign APK
-        uses: ilharp/sign-android-release@v1
-        with:
-          releaseDir: app/build/outputs/apk/debug
-          signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
-          keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        continue-on-error: true   # optional — creates unsigned APK if no keys
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -111,6 +101,5 @@ jobs:
             **Installation:**
             Download the APK below and install it on your Android device.
 
-            > ⚠️ This is a debug build signed with a different key than the Play Store version.
-            > Uninstall the official version first, or use `adb install -r app-debug.apk`.
-          files: app/build/outputs/apk/debug/*.apk
+            > ⚠️ This is a debug build. Uninstall the official version first or use `adb install -r`.
+          files: app/build/outputs/apk/debug/app-debug.apk
