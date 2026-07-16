@@ -10,6 +10,9 @@ on:
 env:
   UPSTREAM_REPO: shrimqy/Sefirah-Android
 
+permissions:
+  contents: write
+
 jobs:
   check-upstream:
     runs-on: ubuntu-latest
