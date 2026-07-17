@@ -93,6 +93,13 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
+      - name: Locate APK
+        run: |
+          find . -name "*.apk" -type f 2>/dev/null
+          echo "---"
+          ls -la app/build/outputs/apk/ 2>/dev/null || echo "no apk dir"
+          ls -la app/build/outputs/ 2>/dev/null | head -5
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -112,4 +119,4 @@ jobs:
             **Differences from upstream:**
             - ✓ Signed with a custom key (can be installed alongside the Play Store version)
             - ✓ Release-optimized build (smaller, faster)
-          files: app/build/outputs/apk/release/app-release.apk
+          files: app/build/outputs/apk/release/*.apk
