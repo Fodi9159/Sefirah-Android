@@ -7,11 +7,11 @@ on:
     - cron: '0 6 * * *'   # daily at 6am UTC
   workflow_dispatch:       # manual trigger
 
-env:
-  UPSTREAM_REPO: shrimqy/Sefirah-Android
-
 permissions:
   contents: write
+
+env:
+  UPSTREAM_REPO: shrimqy/Sefirah-Android
 
 jobs:
   check-upstream:
@@ -31,11 +31,9 @@ jobs:
           git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
           git fetch upstream --tags 2>&1
 
-          # Latest upstream tag (sorted by version)
           LATEST_UPSTREAM=$(git tag -l | grep -v -- '-patched$' | sort -V | tail -1)
           echo "Latest upstream tag: $LATEST_UPSTREAM"
 
-          # Already patched?
           if git tag -l | grep -qF "${LATEST_UPSTREAM}-patched"; then
             echo "needs_build=false" >> "$GITHUB_OUTPUT"
             echo "Already built ${LATEST_UPSTREAM}, skipping"
@@ -72,21 +70,28 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Decode signing keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > release.keystore
+
       - name: Apply our patches
         run: |
-          # Patch: Add TOGGLEABLE_TILE meta-data to ClipboardTileService
           sed -i '/<intent-filter>/,/<\/intent-filter>/{
             /<\/intent-filter>/a\
             <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE"\
                 android:value="true" />
           }' app/src/main/AndroidManifest.xml
           
-          # Verify the patch was applied
           grep -n "TOGGLEABLE_TILE" app/src/main/AndroidManifest.xml
           echo "--- Patch applied successfully ---"
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -103,6 +108,8 @@ jobs:
 
             **Installation:**
             Download the APK below and install it on your Android device.
-
-            > ⚠️ This is a debug build. Uninstall the official version first or use `adb install -r`.
-          files: app/build/outputs/apk/debug/app-debug.apk
+            
+            **Differences from upstream:**
+            - ✓ Signed with a custom key (can be installed alongside the Play Store version)
+            - ✓ Release-optimized build (smaller, faster)
+          files: app/build/outputs/apk/release/app-release.apk
